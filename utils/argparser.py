@@ -94,25 +94,17 @@ def argparser():
                             help='Flag specifying whether the script has to be'
                                  'run in debug mode.')#
      arg_utils.add_argument('--wandb', action='store_true',
-                            help='log results to wandb')
-     arg_utils.add_argument("--wandb_entity", type=str,
-                            help="Name of the entity of Wandb.")
-
+                            help='log results to wandb')#
+     arg_alg.add_argument("--wandb_entity", type=str, help="Name of the entity of Wandb.")
      arg_utils.add_argument('--use_timestamp', action='store_true',
-                            help='Add timestamp to the results folder.')
-
-     arg_utils.add_argument("--use_text", action="store_true", default=False)
-
-     arg_utils.add_argument("--n_exp", type=int, default=1)
-
-     arg_utils.add_argument("--popart", action="store_true", default=False)
+                            help='Add timestamp to the results folder.')#
      arg_utils.add_argument('--results_dir', type=str, default='logs/',
-                            help='Results directory name.')
+                            help='Results directory name.')#
      arg_utils.add_argument('--exp_name', type=str, default='',
-                            help='Name of the experiment.')
-
-     arg_utils.add_argument('--seed', type=int, nargs='+',
-                            help='Seed to be used.')
+                            help='Name of the experiment.')#
+     arg_utils.add_argument("--n_exp", type=int)
+     arg_utils.add_argument('--seed', type=int, nargs = '+', 
+                            help='Seed to be used.')#
 
      args = parser.parse_args()
 
