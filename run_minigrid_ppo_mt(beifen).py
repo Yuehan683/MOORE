@@ -25,8 +25,6 @@ import wandb
 # Utils
 import os
 import pickle
-import math
-from collections import defaultdict
 from joblib import delayed, Parallel
 
 
@@ -53,49 +51,6 @@ MT_EXP = {
         "MiniGrid-MemoryS11-v0",
     ],
 }
-
-
-def get_grad_global_norm(module):
-    total_sq = 0.0
-    has_grad = False
-    for p in module.parameters():
-        if p.grad is not None:
-            g = p.grad.detach()
-            total_sq += g.norm(2).item() ** 2
-            has_grad = True
-    if not has_grad:
-        return 0.0
-    return total_sq ** 0.5
-
-
-def count_nan_inf_in_module(module):
-    count = 0
-    for p in module.parameters():
-        pdata = p.data
-        count += torch.isnan(pdata).sum().item()
-        count += torch.isinf(pdata).sum().item()
-        if p.grad is not None:
-            g = p.grad.detach()
-            count += torch.isnan(g).sum().item()
-            count += torch.isinf(g).sum().item()
-    return int(count)
-
-
-def get_network_orth_stats(network, prefix=""):
-    stats = {}
-    if hasattr(network, "get_orth_stats"):
-        raw_stats = network.get_orth_stats()
-        if raw_stats is None:
-            raw_stats = {}
-        for k, v in raw_stats.items():
-            try:
-                vv = float(v)
-            except Exception:
-                vv = np.nan
-            if not math.isfinite(vv):
-                vv = np.nan
-            stats[f"{prefix}{k}"] = vv
-    return stats
 
 
 def run_experiment(args, save_dir, exp_id=0, seed=None):
@@ -154,8 +109,6 @@ def run_experiment(args, save_dir, exp_id=0, seed=None):
         n_features=actor_n_features,
         n_contexts=n_contexts,
         orthogonal=args.orthogonal,
-        diag_rank_tol=args.diag_rank_tol,
-        diag_canon_sign=args.diag_canon_sign,
         learning_rate=lr_actor,
         n_experts=args.n_experts,
         use_cuda=args.use_cuda,
@@ -189,8 +142,6 @@ def run_experiment(args, save_dir, exp_id=0, seed=None):
         n_features=critic_n_features,
         n_contexts=n_contexts,
         orthogonal=args.orthogonal,
-        diag_rank_tol=args.diag_rank_tol,
-        diag_canon_sign=args.diag_canon_sign,
         learning_rate=lr_critic,
         n_experts=args.n_experts,
         input_shape=mdp[0].info.observation_space.shape,
@@ -270,8 +221,6 @@ def run_experiment(args, save_dir, exp_id=0, seed=None):
         }
     })
 
-    diagnostics = defaultdict(list)
-
     # Initial evaluation
     current_all_average_return = 0.0
     current_all_average_discounted_return = 0.0
@@ -338,70 +287,6 @@ def run_experiment(args, save_dir, exp_id=0, seed=None):
             n_steps_per_fit=train_frequency,
             render=args.render_train
         )
-
-        if args.orthogonal and (args.save_diagnostics or args.log_diagnostics):
-            actor_net = agent.policy._logits.model.network
-            critic_net = agent._V.model.network
-
-            # Read diagnostics only after learning. Do not run any extra forward pass.
-            # These metrics should observe the model state, not modify it.
-            with torch.no_grad():
-                diag = {}
-                diag.update(get_network_orth_stats(actor_net, prefix="actor/"))
-                diag.update(get_network_orth_stats(critic_net, prefix="critic/"))
-
-                diag["grad/actor_global_norm"] = get_grad_global_norm(actor_net)
-                diag["grad/critic_global_norm"] = get_grad_global_norm(critic_net)
-
-                if hasattr(actor_net, "_task_encoder"):
-                    diag["grad/actor_task_encoder_norm"] = get_grad_global_norm(actor_net._task_encoder)
-                    te = actor_net._task_encoder
-                    diag["actor/task_encoder_weight_norm"] = float(torch.linalg.norm(te.weight.detach()).item())
-                    diag["actor/task_encoder_weight_abs_mean"] = float(te.weight.detach().abs().mean().item())
-                    diag["actor/task_encoder_weight_abs_max"] = float(te.weight.detach().abs().max().item())
-                    if te.bias is not None:
-                        diag["actor/task_encoder_bias_norm"] = float(torch.linalg.norm(te.bias.detach()).item())
-                        diag["actor/task_encoder_bias_abs_mean"] = float(te.bias.detach().abs().mean().item())
-                        diag["actor/task_encoder_bias_abs_max"] = float(te.bias.detach().abs().max().item())
-                    else:
-                        diag["actor/task_encoder_bias_norm"] = np.nan
-                        diag["actor/task_encoder_bias_abs_mean"] = np.nan
-                        diag["actor/task_encoder_bias_abs_max"] = np.nan
-                else:
-                    diag["grad/actor_task_encoder_norm"] = np.nan
-
-                if hasattr(critic_net, "_task_encoder"):
-                    diag["grad/critic_task_encoder_norm"] = get_grad_global_norm(critic_net._task_encoder)
-                    te = critic_net._task_encoder
-                    diag["critic/task_encoder_weight_norm"] = float(torch.linalg.norm(te.weight.detach()).item())
-                    diag["critic/task_encoder_weight_abs_mean"] = float(te.weight.detach().abs().mean().item())
-                    diag["critic/task_encoder_weight_abs_max"] = float(te.weight.detach().abs().max().item())
-                    if te.bias is not None:
-                        diag["critic/task_encoder_bias_norm"] = float(torch.linalg.norm(te.bias.detach()).item())
-                        diag["critic/task_encoder_bias_abs_mean"] = float(te.bias.detach().abs().mean().item())
-                        diag["critic/task_encoder_bias_abs_max"] = float(te.bias.detach().abs().max().item())
-                    else:
-                        diag["critic/task_encoder_bias_norm"] = np.nan
-                        diag["critic/task_encoder_bias_abs_mean"] = np.nan
-                        diag["critic/task_encoder_bias_abs_max"] = np.nan
-                else:
-                    diag["grad/critic_task_encoder_norm"] = np.nan
-
-                diag["num/nan_inf_count_actor"] = count_nan_inf_in_module(actor_net)
-                diag["num/nan_inf_count_critic"] = count_nan_inf_in_module(critic_net)
-                diag["num/nan_inf_count_total"] = (
-                    diag["num/nan_inf_count_actor"] + diag["num/nan_inf_count_critic"]
-                )
-
-            for k, v in diag.items():
-                diagnostics[k.replace("/", "_")].append(v)
-
-            if args.wandb and args.log_diagnostics:
-                wandb.log(
-                    {f"diagnostics/{k}": v for k, v in diag.items()},
-                    step=n + 1,
-                    commit=False
-                )
 
         current_all_average_return = 0.0
         current_all_average_discounted_return = 0.0
@@ -480,9 +365,6 @@ def run_experiment(args, save_dir, exp_id=0, seed=None):
         agent.policy._logits.model.network.save_task_encoder(
             os.path.join(save_dir, "actor_model", "actor_task_encoder.pth")
         )
-
-    if args.save_diagnostics:
-        metrics["diagnostics"] = dict(diagnostics)
 
     return metrics
 
